@@ -1,9 +1,6 @@
 from flask import Flask, render_template, request, jsonify,json, session
-import matplotlib.pyplot as plt
 from itertools import combinations
-from collections import deque
 from math import atan2
-import numpy as np
 import random
 
 app = Flask(__name__)
