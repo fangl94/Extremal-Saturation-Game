@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Extremal Game</title>
+    <style>
+        .blue-bullet {
+            position: absolute;
+            background-color: blue;
+            border-radius: 50%;
+            width: 8px;
+            height: 8px;
+        }
+
+        .red-line {
+            position: absolute;
+            background-color: red;
+            width: 1px;
+            z-index: 1;
+        }
+
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Extremal Game</h1>
+    <p>Click on the canvas to add points:</p>
+    <div class="container">
+        <label for="goal">Set the goal you want to achieve:</label>
+        <input type="number" id="goal" name="goal" min="4">
+        <button id="setGoalButton">Set Goal</button>
+    </div>
+    <canvas id="canvas" width="500" height="500" style="border: 1px solid black;"></canvas>
+    <button id="confirmPoint" class="hidden">Confirm Point</button>
+    <button id="withdrawPoint" class="hidden">Withdraw Point</button>
+    <div id="message" style="color: red;"></div>
+    <button id="clearPage">Clear Page</button>
+    <div id="pointsContainer"></div>
+    <button id="getBlackBulletCoordinates">Get Blue Bullet Coordinates</button>
+    <div id="blackBulletCoordinatesOutput"></div>
+    <div id="redLine" class="red-line"></div>
+    <input type="text" id="pointsInput" placeholder="Enter points JSON">
+    <button id="drawButton">Draw Points and Line</button>
+
+    <script>
+        let canvas = document.getElementById("canvas");
+        const ctx = canvas.getContext("2d");
+        const confirmPointButton = document.getElementById("confirmPoint");
+        const withdrawPointButton = document.getElementById("withdrawPoint");
+        const messageElement = document.getElementById("message");
+        const pointsContainer = document.getElementById("pointsContainer");
+        const clearPageButton = document.getElementById("clearPage");
+        const points = [];
+        const confirmpoints = [];
+        let pendingPoint = null;
+        const goalInput = document.getElementById("goal");
+        const setGoalButton = document.getElementById("setGoalButton");
+
+
+
+        setGoalButton.addEventListener("click", () => {
+            const n = parseInt(goalInput.value, 10);
+
+            fetch('/post_n', {
+                method: 'POST',
+                body: JSON.stringify({ n }),
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+            })
+                .then(response => response.json())
+                .then(data => {
+                    // Handle the response from the backend as needed
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                });
+        });
+
+
+
+
+        // Function to draw the convex hull
+        function drawConvexHull(ordered_ngon) {
+            // Clear the canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw the points
+            ctx.fillStyle = 'blue';
+            for (const point of points) {
+                ctx.beginPath();
+                ctx.arc(point.x, point.y, 5, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+
+            // Draw lines to connect the points in the convex hull
+            ctx.strokeStyle = 'red';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+
+            for (let i = 0; i < ordered_ngon.length; i++) {
+                const point = ordered_ngon[i];
+                const nextPoint = ordered_ngon[(i + 1) % ordered_ngon.length]; // Wrap around to the first point
+                ctx.moveTo(point.x, point.y);
+                ctx.lineTo(nextPoint.x, nextPoint.y);
+            }
+
+            ctx.stroke();
+        }
+
+
+
+        function checkConvexNgon() {
+            fetch('/are_there_n_convex_gon', {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+            })
+                .then(response => response.json())
+                .then(data => {
+                    // Handle the response from the backend
+                    if (data.game_status === 'lost') {
+                        // Draw the convex hull using the ordered_ngon data
+                        messageElement.textContent = data.message;
+                        const restartButton = document.createElement("button");
+                        restartButton.textContent = "Restart Game";
+                        restartButton.addEventListener("click", clearPage);
+                        messageElement.appendChild(restartButton);
+                        drawConvexHull(data.convex_ngon);
+                    }
+                    if (data.game_status === 'win' ) {
+                        messageElement.textContent = "You win the game, you can add any point on the board to see if you can form a convex n-gon, or restart the game.";
+                        const restartButton = document.createElement("button");
+                        restartButton.textContent = "Restart Game";
+                        restartButton.addEventListener("click", clearPage);
+                        messageElement.appendChild(restartButton);
+                    }
+
+                    else {
+                        // Handle the game status when it's not lost or when ordered_ngon is not available
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                });
+        }
+
+        canvas.addEventListener("click", (event) => {
+            const x = event.clientX - canvas.getBoundingClientRect().left;
+            const y = event.clientY - canvas.getBoundingClientRect().top;
+
+            const isConfirmHidden = confirmPointButton.style.display === "none";
+            const isWithdrawHidden = withdrawPointButton.style.display === "none";
+
+            if (!pendingPoint || (isConfirmHidden && isWithdrawHidden)) {
+                pendingPoint = { x, y };
+                displayPoint(pendingPoint);
+
+                // Show the buttons
+                confirmPointButton.style.display = "block";
+                withdrawPointButton.style.display = "block";
+
+                showMessage("Click 'Confirm Point' or 'Withdraw Point'");
+            }
+        });
+
+
+        confirmPointButton.addEventListener("click", () => {
+            if (pendingPoint) {
+                points.push(pendingPoint);
+                displayPoint(pendingPoint);
+                pendingPoint = null;
+                showMessage("");
+                sendPointsToServer(points);
+                confirmpoints.push(pendingPoint);
+                checkGameStatus();
+                checkConvexNgon();
+            }
+        });
+
+
+        async function fetchPointsFromServer() {
+            try {
+                const response = await fetch('/get_points', {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                });
+
+                if (!response.ok) {
+                    throw new Error('Error fetching points from the server');
+                }
+
+                const data = await response.json();
+                return data.points;
+            } catch (error) {
+                console.error('Error fetching points:', error);
+                return [];
+            }
+        }
+
+
+        async function getBlackBulletCoordinates() {
+            const uniqueCoordinates = await fetchPointsFromServer();
+
+            console.log("Unique Black Bullet Coordinates:");
+            console.log(uniqueCoordinates);
+
+            const coordinatesOutput = document.getElementById("blackBulletCoordinatesOutput");
+            coordinatesOutput.textContent = JSON.stringify(uniqueCoordinates, null, 2);
+        }
+
+        const getBlackBulletCoordinatesButton = document.getElementById("getBlackBulletCoordinates");
+        getBlackBulletCoordinatesButton.addEventListener("click", getBlackBulletCoordinates);
+
+
+        async function withdrawPoints() {
+            if (pendingPoint) {
+                points.push(pendingPoint);
+                displayPoint(pendingPoint);
+                pendingPoint = null;
+                showMessage("");
+            }
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear the canvas
+            let showpoints = await fetchPointsFromServer();
+            showpoints.forEach((point) => {
+                displayPoint(point);
+            });
+        }
+
+        withdrawPointButton.addEventListener("click", () => {
+            withdrawPoints();
+        });
+
+
+        function displayPoint(point) {
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, 4, 0, 2 * Math.PI);
+            ctx.fillStyle = "blue";
+            ctx.fill();
+            ctx.closePath();
+            points.unshift(point);
+        }
+
+
+
+        function showMessage(message) {
+            messageElement.textContent = message;
+        }
+
+        clearPageButton.addEventListener("click", () => {
+            clearPage();
+        });
+
+        function clearPage() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            points.length = 0;
+            confirmpoints.length = 0;
+            pendingPoint = null;
+            sendClearRequest();
+        }
+
+        function sendPointsToServer(points) {
+            if (points.length > 0) {
+                const firstPoint = points[0];
+                fetch('/add_point', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ points: [firstPoint] })
+                })
+                    .then(data => data.json())
+                    .then(data => {
+                        console.log(data);
+                        if (data.added_point) {
+                            showMessage(`Point added at x: ${data.added_point.x}, y: ${data.added_point.y}`);
+                        }
+                        if (data.points) {
+                            showPoints(data.points);
+                        }
+                    });
+            }
+        }
+
+        function showPoints(serverPoints) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            serverPoints.forEach((point) => {
+                displayPoint(point);
+            });
+        }
+
+
+        function checkGameStatus() {
+            fetch('/check_game_status', {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.game_status === "lost") {
+                        messageElement.textContent = data.message;
+                        const restartButton = document.createElement("button");
+                        restartButton.textContent = "Restart Game";
+                        restartButton.addEventListener("click", clearPage);
+                        messageElement.appendChild(restartButton);
+                    }
+
+                    if (data.losing_points.length === 3) {
+                        const points = data.losing_points;
+                        drawRedLine(points);
+                        console.log('Received Data:', data.losing_points);
+                    }
+                });
+        }
+
+        function drawRedLine(points) {
+            const A = points.reduce((min, point) => (point.x < min.x ? point : min), points[0]);
+            const B = points.reduce((max, point) => (point.x > max.x ? point : max), points[0]);
+
+            ctx.beginPath();
+            ctx.moveTo(A.x, A.y);
+            ctx.lineTo(B.x, B.y);
+            ctx.strokeStyle = "red";
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.closePath();
+        }
+
+        function sendClearRequest() {
+            fetch('/clear_points', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ clear: true })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    console.log(data);
+                });
+        }
+
+        document.getElementById("drawButton").addEventListener("click", function () {
+            const pointsInput = document.getElementById("pointsInput").value;
+            try {
+                const points = JSON.parse(pointsInput);
+                drawPointsAndLine(points);
+            } catch (error) {
+                alert("Invalid input. Please provide points in JSON format.");
+            }
+        });
+
+        function drawPointsAndLine(points) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            points.forEach(point => {
+                ctx.beginPath();
+                ctx.arc(point.x, point.y, 4, 0, 2 * Math.PI);
+                ctx.fillStyle = "blue";
+                ctx.fill();
+                ctx.closePath();
+            });
+
+            const A = points.reduce((min, point) => (point.x < min.x ? point : min), points[0]);
+            const B = points.reduce((max, point) => (point.x > max.x ? point : max), points[0]);
+
+            ctx.beginPath();
+            ctx.moveTo(A.x, A.y);
+            ctx.lineTo(B.x, B.y);
+            ctx.strokeStyle = "red";
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.closePath();
+        }
+
+
+    </script>
+</body>
+
+</html>
